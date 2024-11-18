@@ -1,72 +1,75 @@
-import telebot
-from random import choice
+from telebot import TeleBot, types
+import random
 
-# Вставьте сюда ваш токен от BotFather
 TOKEN = '7596980839:AAEAyGgj5K2s0A7f4IJYUw52WnmiD3nnB6w'
 
-bot = telebot.TeleBot(TOKEN)
+bot = TeleBot(TOKEN)
+users = {}
+
+questions = {1: [("В каком году началась Великая Отечественная война?", "1941"),("Кто был первым президентом США?", "Джордж Вашингтон")],
+            2: [("Кто был первым императором Римской империи?", "Октавиан Август"),("В каком году распался Советский Союз?", "1991")],
+            3: [("Когда была подписана Магна Карта?", "1215"),("Кто был фараоном при строительстве пирамид?", "Хеопс")]}
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, f"Привет! Я викторина по истории. Напишите ваше имя.")
+    user_id = message.from_user.id
+    users[user_id] = {"name": message.from_user.first_name, "level": None, "points": 0, "current_question": 0,
+                      "current_question_info": None}
+    bot.send_message(user_id,
+                     f"Приветствую тебя, {message.from_user.first_name}! Это викторина по истории. Выбери уровень сложности: 1, 2 или 3.",
+                     reply_markup=types.ForceReply(selective=True))
 
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    # Обрабатываем сообщение пользователя
-    user_name = message.text.strip()
-    bot.send_message(message.chat.id, f"{user_name}, выберите уровень сложности (1-3).")
+@bot.message_handler(func=lambda m: m.text.isdigit() and len(m.text) == 1 and m.reply_to_message is not None)
+def set_level(message):
+    user_id = message.from_user.id
+    level = int(message.text)
+    if level in [1, 2, 3]:
+        users[user_id]["level"] = level
+        bot.send_message(user_id, f"Твой уровень сложности: {level}. Начнем викторину!")
+        ask_question(user_id)
+    else:
+        bot.send_message(user_id, "Уровень сложности должен быть числом от 1 до 3. Попробуй еще раз:",
+                         reply_markup=types.ForceReply(selective=True))
 
-    @bot.message_handler(func=lambda msg: True)
-    def handle_level(msg):
-        try:
-            level = int(msg.text.strip())
-        except ValueError:
-            level = 1
-            bot.send_message(msg.chat.id, 'Установлен первый уровень сложности.')
+def ask_question(user_id):
+    user_data = users[user_id]
+    current_question = user_data["current_question"]
+    level = user_data["level"]
+    question, answer = random.choice(questions[level])
+    user_data["current_question_info"] = (question, answer)
+    bot.send_message(user_id, f"Вопрос {current_question + 1}: {question}",
+                     reply_markup=types.ForceReply(selective=True))
 
-        if level < 1 or level > 3:
-            level = 1
-            bot.send_message(msg.chat.id, 'Установлен первый уровень сложности.')
+@bot.message_handler(func=lambda m: m.reply_to_message is not None)
+def handle_answers(message):
+    user_id = message.from_user.id
+    user_data = users[user_id]
+    current_question = user_data["current_question"]
+    question, answer = user_data["current_question_info"]
 
-        questions = {
-            1: [
-                ('В каком году началась Великая Отечественная Война?', "1941"),
-                ("Кто был первым президентом США?", "Джордж Вашингтон")
-            ],
-            2: [
-                ('Кто был первым императором Римской Империи?', "Октавиан Август"),
-                ("В каком году распался СССР?", "1991")
-            ],
-            3: [
-                ('Когда была подписана Магна Карта?', "1215"),
-                ("Кто был фараоном во время строительства пирамид?", "Хеопс")
-            ]
-        }
+    user_answer = message.text.strip().lower()
+    correct_answer = answer.strip().lower()
 
-        points = 0
-        for _ in range(3):
-            question, correct_answer = choice(questions[level])
-            bot.send_message(msg.chat.id, f"{user_name}, {question}")
+    if user_answer == correct_answer:
+        user_data["points"] += 1
+        bot.send_message(user_id, "Верно!")
+    else:
+        bot.send_message(user_id, f"Неверно. Правильный ответ: {answer}")
+    user_data["current_question"] += 1
+    if user_data["current_question"] >= 3:
+        finish_quiz(user_id)
+    else:
+        ask_question(user_id)
 
-            @bot.message_handler(func=lambda m: True)
-            def handle_answer(m):
-                student_answer = m.text.strip().lower()
-                if student_answer == correct_answer.lower():
-                    points += 1
-                    bot.send_message(m.chat.id, 'Правильно!')
-                else:
-                    bot.send_message(m.chat.id, f'Неправильно. Правильный ответ: {correct_answer}')
-
-                if points == 3:
-                    bot.send_message(m.chat.id, f"Ты историк, {user_name}!")
-                elif points == 2:
-                    bot.send_message(m.chat.id, f"Хорошо, {user_name}, но нужно глубже изучать.")
-                else:
-                    bot.send_message(m.chat.id, f"История не твоя сильная сторона, {user_name}.")
-
-                bot.register_next_step_handler(m, handle_answer)
-
-            bot.register_next_step_handler(msg, handle_answer)
-
-
-bot.polling(none_stop=True)
+def finish_quiz(user_id):
+    user_data = users[user_id]
+    points = user_data["points"]
+    if points == 3:
+        bot.send_message(user_id, f"Ты историк!")
+    elif points == 2:
+        bot.send_message(user_id, f"Хорошо, но нужно глубже изучать..")
+    else:
+        bot.send_message(user_id, f"История не твоя сильная сторона.")
+    del users[user_id]
+if __name__ == '__main__':
+    bot.polling(non_stop=True)
